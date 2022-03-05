@@ -52,11 +52,22 @@ class RawFeatures(object):
         hist_long = df.loc[df['rownum'].isin(weekly_cuts)].groupby(['Season', "TeamID", "rownum"])['OrdinalRank'].mean().reset_index()
         hist_piv = hist_long.pivot_table( index=['Season', 'TeamID'], columns = ['rownum'], values = ['OrdinalRank']).reset_index()
         hist_piv.columns = ['Season', 'TeamID', 'avg_rank_l31', 'avg_rank_l61', 'avg_rank_l91']
+        
+        # fill with the max (unranked)
         max_fill = current_rank_piv.avg_rank_c.max()
         all_ranks = pd.merge(current_rank_piv, hist_piv, on = ['Season', 'TeamID'], how = 'left').fillna(max_fill)
         all_ranks['rank_l31_delta'] = all_ranks['avg_rank_l31']/all_ranks['avg_rank_c']
         all_ranks['rank_l61_delta'] = all_ranks['avg_rank_l61']/all_ranks['avg_rank_c']
         all_ranks['rank_l91_delta'] = all_ranks['avg_rank_l61']/all_ranks['avg_rank_c']
+        
+        # pre season
+        df['rownum'] = df.groupby(['SystemName', 'Season'])['RankingDayNum'].rank(method='dense', ascending=True)
+        pre_long = df.loc[df['rownum'] == 1].groupby(['Season', "TeamID"])['OrdinalRank'].mean().reset_index()
+        pre_long.columns = ['Season', 'TeamID', 'avg_rank_pre']
+        all_ranks = pd.merge(all_ranks, pre_long, on=['Season', 'TeamID'], how='left').fillna(max_fill)
+        all_ranks['avg_rank_exp'] = all_ranks['avg_rank_pre']/all_ranks['avg_rank_c']
+
+        # yearly trend metrics? 
 
 
 
