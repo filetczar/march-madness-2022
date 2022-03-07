@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 from math import log 
+import numpy as np
 
 class RawFeatures(object):
     def __init__(self, min_year: int, max_year: int, data_dir: str):
@@ -20,6 +21,7 @@ class RawFeatures(object):
         if 'year_trend' not in self.feature_set.columns:
             self.feature_set['year_trend'] = self.feature_set['Season'].apply(lambda x: log((x+.01) - self.min_year))
         self.reg_season_stats()
+        self.opponent_stats()
         return self.feature_set
     
     def team_df_build(self, raw_df_name = 'MNCAATourneyCompactResults' ):
@@ -183,6 +185,81 @@ class RawFeatures(object):
         reg_stats_feature_set = total_reg_stats[features_to_keep]  
         self.feature_set = pd.merge(self.feature_set, reg_stats_feature_set, on = ['Season', 'TeamID'], how='left').fillna(0)
 
+    
+    def opponent_stats(self, raw_df_name = 'MRegularSeasonCompactResults'):
+        """_summary_
+        oppg: opponents points per game 
+        pyth_wins: Pythagoreon Wins
+        p_win_l10: percent wins by a score of 10 or less 
+        win_perc_l10: Last 10 games winning percentage (including conf tour games)
+        log_ppg_oppg: log of points per game divided by oppg 
+        Args:
+            raw_df_name (str, optional): _description_. Defaults to 'MRegularSeasonDetailedResults'.
+        """
+        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        conf_df = pd.read_csv(f"{self.data_dir}/MConferenceTourneyGames.csv")
+        df['score_diff'] = df['WScore'] - df['LScore']
+        close_games = df.loc[(df['score_diff'] <= 10) | (df['NumOT'] > 0)]
+        close_wins = close_games.groupby(['Season', 'WTeamID'])['DayNum'].count().reset_index()
+        close_wins.columns = ['Season', 'TeamID', 'close_wins']
+        close_losses = close_games.groupby(['Season', 'LTeamID'])['DayNum'].count().reset_index() 
+        close_losses.columns = ['Season', 'TeamID', 'close_losses']
+        all = pd.concat([close_losses[['Season', 'TeamID']], close_wins[['Season', 'TeamID']]]).drop_duplicates()
+        all = pd.merge(all, close_wins, on = ['Season', 'TeamID'], how='left').fillna(0)
+        all = pd.merge(all, close_losses, on= ['Season', 'TeamID'], how='left').fillna(0)
+        all['close_win_perc'] = all['close_wins']/(all['close_wins'] + all['close_losses'])
+        self.feature_set = pd.merge(self.feature_set, all[['Season', 'TeamID', 'close_win_perc']], 
+                                        on = ['Season', 'TeamID'], how='left').fillna(0)
+        # last ten win percentage 
+        cols = ['Season', 'DayNum', 'WTeamID', 'LTeamID']
+        all_games = df.sort_values(['Season', 'DayNum'], ascending = True)
+        all_games['game_id'] = np.arange(len(all_games))
+        # Season, TeamID, game_id, win (1/0)
+        last_10_w = all_games[['Season', 'DayNum', 'game_id', 'WTeamID', 'WScore']]
+        last_10_w['win'] = 1 
+        last_10_w.columns = ['Season', 'DayNum', 'game_id', 'TeamID', 'points','win']
+        last_10_l = all_games[['Season', 'DayNum', 'game_id', 'LTeamID', 'LScore']]
+        last_10_l['win'] = 0
+        last_10_l.columns = ['Season', 'DayNum', 'game_id', 'TeamID', 'points','win']
+        last_10 = pd.concat([last_10_l, last_10_w])
+        last_10['cut'] = last_10.groupby(['Season', 'TeamID'])['game_id'].rank(method='dense', ascending = False)
+        last_10_wins = last_10.loc[last_10['cut'] <= 10].groupby(['Season', 'TeamID'])['win'].sum().reset_index()
+        last_10_wins.columns = ['Season', 'TeamID', 'wins']
+        last_10_wins['win_perc_l10'] = last_10_wins['wins']/10
+        # merge
+        self.feature_set = pd.merge(self.feature_set, last_10_wins[['Season', 'TeamID', 'win_perc_l10']], 
+                                    on = ['Season', 'TeamID'], how = 'left')
+        # oppg 
+        total_points = last_10.groupby(['game_id'])['points'].sum().reset_index()
+        total_points.columns = ['game_id', 'total_points']
+        all_games_points = last_10.merge(total_points, on ='game_id', how='left').fillna(0)
+        all_games_points['opp_score'] = all_games_points['total_points'] - all_games_points['points']
+        op_pg = all_games_points.groupby(['Season', 'TeamID']).agg({'opp_score': ['sum'], 
+                                                                    'game_id': ['nunique'], 
+                                                                    'points': ['sum']}).reset_index()
+        # NEED TO FIX THE COLUMN INDEXES 
+        op_pg.columns = ['Season', 'TeamID', 'opp_score', 'games', 'total_points']
+        op_pg['oppg'] = op_pg['opp_score']/op_pg['games']
+        op_pg['pythag_wins'] = op_pg['total_points']**(11.5)/(op_pg['total_points']**(11.5) + op_pg['opp_score']**(11.5))
+        fillavg = op_pg['oppg'].mean()
+        fillavg_p = op_pg['pythag_wins'].mean()
+        self.feature_set = pd.merge(self.feature_set, 
+                                    op_pg[['Season', 'TeamID', 'oppg']], on = ['Season', 'TeamID'], how ='left').fillna(fillavg)
+        self.feature_set = pd.merge(self.feature_set, 
+                                    op_pg[['Season', 'TeamID', 'pythag_wins']], on = ['Season', 'TeamID'], how ='left').fillna(fillavg_p)
+        self.feature_set['log_ppg_oppg'] = self.feature_set['ppg']/self.feature_set['oppg']
+
+        
+
+
+
+
+        
+
+
+       
+
+        
 
 
 
@@ -194,8 +271,9 @@ all_years = RawFeatures(min_year = 2003,
                         data_dir = '/Users/philazar/Desktop/march-madness/data/data-2022/MDataFiles_Stage1')
 
 all_data = all_years.build_feature_set()
-for team_id in [1228]:
+for team_id in [1228, 1260]:
     print(all_data.loc[all_data['TeamID'] == team_id].sort_values(['Season']).head(50))
+    print(all_data.loc[all_data['TeamID'] == team_id].sort_values(['Season'])[['Season', 'ppg', 'oppg', 'win_perc', 'pythag_wins']]) 
 
 
 
