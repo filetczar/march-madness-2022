@@ -2,9 +2,10 @@ import pandas as pd
 import os
 from math import log 
 import numpy as np
+from datetime import datetime
 
 class RawFeatures(object):
-    def __init__(self, min_year: int, max_year: int, data_dir: str):
+    def __init__(self, min_year: int, max_year: int, stage: int, data_dir: str):
         if min_year < 2003:
             min_year = 2003
         if max_year > 2022:
@@ -12,20 +13,37 @@ class RawFeatures(object):
         self.min_year = min_year
         self.max_year = max_year
         self.data_dir = data_dir
+        self.stage = stage
+    def get_raw_data(self, raw_df_name):
+        return pd.read_csv(f"{self.data_dir}/MDataFiles_Stage{self.stage}/{raw_df_name}.csv")
 
-    def build_feature_set(self) -> pd.DataFrame: 
+    def build_feature_set(self, type = 'stats', save=True) -> pd.DataFrame: 
+        if type == 'stats':
+            self.min_year = 1985
+            self.max_year = 2022
+        else:
+            self.min_year = 2003
+            self.max_year = 2022
+
         self.team_df_build()
-        self.tourn_seed()
-        self.rankings()
-        self.conference_champ()
+        if type == 'stats':
+            self.conference_champ()
+            self.reg_season_stats()
+            self.opponent_stats()
+            self.coach_exp()
+        else:
+            self.tourn_seed()
+            self.rankings()
+        
         if 'year_trend' not in self.feature_set.columns:
-            self.feature_set['year_trend'] = self.feature_set['Season'].apply(lambda x: log((x+.01) - self.min_year))
-        self.reg_season_stats()
-        self.opponent_stats()
+            self.feature_set['year_trend'] = self.feature_set['Season'].apply(lambda x: log((x+.001) - self.min_year)) 
+        if save: 
+            self.feature_set.to_csv(f"{self.data_dir}/model-dev/training/raw_feats_{type}_{datetime.strftime(datetime.today(), '%Y_%m_%d')}.csv", index = False)
+
         return self.feature_set
     
     def team_df_build(self, raw_df_name = 'MNCAATourneyCompactResults' ):
-        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        df = self.get_raw_data(raw_df_name)
         winning_teams = df[['Season', 'WTeamID']].loc[(df['Season'] >= self.min_year) & (df['Season'] <= self.max_year)]\
                             .drop_duplicates()\
                             .rename(columns={'WTeamID': 'TeamID'})
@@ -38,7 +56,7 @@ class RawFeatures(object):
         self.feature_set = all_teams 
     
     def tourn_seed(self, raw_df_name = 'MNCAATourneySeeds'):
-        df =  pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        df = df = self.get_raw_data(raw_df_name)
         df = df.loc[(df['Season'] >= self.min_year) & (df['Season'] <= self.max_year)]
         df['tourn_seed'] = df["Seed"].apply(lambda x: int(x[1:3]))
         self.feature_set = pd.merge(self.feature_set, df[['TeamID','Season','tourn_seed']], on = ['Season', 'TeamID'], how='left').fillna(16)
@@ -48,7 +66,7 @@ class RawFeatures(object):
                 raw_df_name = 'MMasseyOrdinals', 
                 good_rankings = ['POM', 'RPI', 'AP', 'NET', 'KPK','MAS', 'SAG', 'USA','MOR']):
         last_day = 133
-        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        df = self.get_raw_data(raw_df_name)
         df = df.loc[(df['Season'] >= self.min_year) & (df['Season'] <= self.max_year)]\
                 .loc[df['SystemName'].isin(good_rankings)]
         current_rankings = df.loc[df['RankingDayNum'] == last_day]
@@ -87,7 +105,7 @@ class RawFeatures(object):
     def conference_champ(self, 
                         raw_df_name = 'MConferenceTourneyGames',
                         major_conf = ['big_twelve', 'pac_ten','big_ten', 'pac_twelve', 'big_east', 'acc', 'sec']):
-        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        df = self.get_raw_data(raw_df_name)
         df['champ_game'] = df.groupby(['Season', 'ConfAbbrev'])['DayNum'].rank(method='first', ascending = False)
         conference_champs = df.loc[df['champ_game'] == 1][['Season', 'WTeamID']]
         conference_champs.rename(columns = {'WTeamID': 'TeamID'}, inplace=True)
@@ -103,7 +121,7 @@ class RawFeatures(object):
         self.feature_set = pd.merge(self.feature_set, all_teams, on = ['Season', 'TeamID'], how='left').fillna(0)
 
     def reg_season_stats(self, raw_df_name = 'MRegularSeasonDetailedResults'):
-        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
+        df = self.get_raw_data(raw_df_name)
         # team, season, total games 
         # total stats 
         # WFGM3,WFGA3,WFTM,WFTA,WOR,WDR,WAst,WTO,WStl,WBlk
@@ -196,8 +214,8 @@ class RawFeatures(object):
         Args:
             raw_df_name (str, optional): _description_. Defaults to 'MRegularSeasonDetailedResults'.
         """
-        df = pd.read_csv(f"{self.data_dir}/{raw_df_name}.csv")
-        conf_df = pd.read_csv(f"{self.data_dir}/MConferenceTourneyGames.csv")
+        df = df = self.get_raw_data(raw_df_name)
+        conf_df = self.get_raw_data(raw_df_name= 'MConferenceTourneyGames')
         df['score_diff'] = df['WScore'] - df['LScore']
         close_games = df.loc[(df['score_diff'] <= 10) | (df['NumOT'] > 0)]
         close_wins = close_games.groupby(['Season', 'WTeamID'])['DayNum'].count().reset_index()
@@ -247,33 +265,40 @@ class RawFeatures(object):
                                     op_pg[['Season', 'TeamID', 'oppg']], on = ['Season', 'TeamID'], how ='left').fillna(fillavg)
         self.feature_set = pd.merge(self.feature_set, 
                                     op_pg[['Season', 'TeamID', 'pythag_wins']], on = ['Season', 'TeamID'], how ='left').fillna(fillavg_p)
-        self.feature_set['log_ppg_oppg'] = self.feature_set['ppg']/self.feature_set['oppg']
+        self.feature_set['ppg_oppg_ratio'] = self.feature_set['ppg']/self.feature_set['oppg']
 
-        
+    def coach_exp(self, raw_df_name = "MTeamCoaches"):
+        df = self.get_raw_data(raw_df_name=raw_df_name)
+        tourney_results = self.get_raw_data(raw_df_name = "MNCAATourneyCompactResults")
+        # season, teamid, n_years_at_school, n_years_coaching, coach_tourn_wp
 
-
-
-
-        
-
-
-       
-
-        
-
-
-
+        df['n_yrs_at_school'] = df.sort_values(['Season'], ascending=True).groupby(['TeamID', 'CoachName'])['Season'].cumcount() + 1 
+        df['coach_tot_yrs'] = df.sort_values(['Season'], ascending=True).groupby(['CoachName'])['Season'].cumcount() + 1  
+        tourney_wins = tourney_results.groupby(['Season', 'WTeamID'])['DayNum'].nunique().reset_index()
+        tourney_losses = tourney_results.groupby(['Season', 'LTeamID'])['DayNum'].nunique().reset_index() 
+        tourney_wins.rename(columns = {'WTeamID': 'TeamID', 'DayNum': 'wins'}, inplace=True)
+        tourney_losses.rename(columns = {'LTeamID':'TeamID', 'DayNum': 'losses'}, inplace=True)
+        all_tourney = tourney_wins.merge(tourney_losses, on = ['Season', 'TeamID'], how ='outer').fillna(0)
+        all_tourney['total_games'] = all_tourney['wins'] + all_tourney['losses']
+        school_games = df.merge(all_tourney, on= ['Season', 'TeamID'], how='left').fillna(0)
+        school_games['prev_wins'] = school_games.sort_values(['Season', 'TeamID'], ascending=True).groupby(['TeamID']).wins.shift(1)
+        school_games['prev_losses'] = school_games.sort_values(['Season', 'TeamID'], ascending=True).groupby(['TeamID']).losses.shift(1)
+        school_games['prev_total'] = school_games.sort_values(['Season', 'TeamID'], ascending=True).groupby(['TeamID']).total_games.shift(1)
+        # coach cum win percentage, school cum wp, last year wins 
+        school_games['coach_cum_wp'] = school_games.sort_values(['Season'], ascending=True).groupby(['CoachName'])['prev_wins'].cumsum()/school_games.sort_values(['Season'], ascending=True).groupby(['CoachName'])['prev_total'].cumsum()
+        school_games['school_cum_wp'] = school_games.sort_values(['Season'], ascending=True).groupby(['TeamID'])['prev_wins'].cumsum()/school_games.sort_values(['Season'], ascending=True).groupby(['TeamID'])['prev_total'].cumsum()
+        features = ['Season','TeamID', 'n_yrs_at_school', 'coach_tot_yrs', 'prev_wins', 'coach_cum_wp', 'school_cum_wp']
+        self.feature_set = self.feature_set.merge(school_games[features], on = ['Season', 'TeamID'], how = 'left').fillna(0)
 
 
 # testing
 all_years = RawFeatures(min_year = 2003, 
                         max_year = 2021, 
-                        data_dir = '/Users/philazar/Desktop/march-madness/data/data-2022/MDataFiles_Stage1')
+                        stage = 1, 
+                        data_dir = '/Users/philazar/Desktop/march-madness/data/data-2022/')
 
-all_data = all_years.build_feature_set()
-for team_id in [1228, 1260]:
-    print(all_data.loc[all_data['TeamID'] == team_id].sort_values(['Season']).head(50))
-    print(all_data.loc[all_data['TeamID'] == team_id].sort_values(['Season'])[['Season', 'ppg', 'oppg', 'win_perc', 'pythag_wins']]) 
+stat_data = all_years.build_feature_set(save=True, type='stat')
+ranking_data = all_years.build_feature_set(save=True, type='rank') 
 
 
 
