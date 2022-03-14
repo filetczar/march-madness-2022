@@ -5,12 +5,10 @@ import numpy as np
 # data sets needed
 # training: 1. stats 2. rankings 
 # prediction: 1. stats 2. rankings 
+# Note add in feature: expected score here 
 def build_head_to_head(df: pd.DataFrame, 
-                        dir: str = None, 
-                        features_df_path: str = None, 
-                        holdout_year = 2022):
+                        features_df: pd.DataFrame = None):
     
-    features_df = pd.read_csv(f"{dir}/{features_df_path}")
     feature_names = [c for c in features_df.columns if c not in ['Season', 'TeamID', 'year_trend']]
     rename_dict = {}
     for f in feature_names:
@@ -29,7 +27,7 @@ def build_head_to_head(df: pd.DataFrame,
         try:
             games_df[f"{feat}_ratio"] = games_df[f"h{feat}"]/games_df[f"a{feat}"] 
         except ZeroDivisionError:
-            games_df[f"{feat}_ratio"] = games_df[f"h{feat}"]/(games_df[f"a{feat}"] + .001)
+            games_df[f"{feat}_ratio"] = games_df[f"h{feat}"]
+
     return games_df 
-df = build_head_to_head()
  

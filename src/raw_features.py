@@ -289,30 +289,3 @@ class RawFeatures(object):
         school_games['school_cum_wp'] = school_games.sort_values(['Season'], ascending=True).groupby(['TeamID'])['prev_wins'].cumsum()/school_games.sort_values(['Season'], ascending=True).groupby(['TeamID'])['prev_total'].cumsum()
         features = ['Season','TeamID', 'n_yrs_at_school', 'coach_tot_yrs', 'prev_wins', 'coach_cum_wp', 'school_cum_wp']
         self.feature_set = self.feature_set.merge(school_games[features], on = ['Season', 'TeamID'], how = 'left').fillna(0)
-
-
-# testing
-all_years = RawFeatures(min_year = 2003, 
-                        max_year = 2021, 
-                        stage = 1, 
-                        data_dir = '/Users/philazar/Desktop/march-madness/data/data-2022/')
-
-stat_data = all_years.build_feature_set(save=True, type='stat')
-ranking_data = all_years.build_feature_set(save=True, type='rank') 
-
-
-
-
-        
-
-            
-
-
-
-
-
-
-
-    
-
-

@@ -34,10 +34,6 @@ def matchup_data(raw_df_path = '/Users/philazar/Desktop/march-madness/data/data-
     new_df.rename(columns = {'TeamID1': 'hTeamID', 'TeamID2': 'aTeamID'}, inplace=True)
     new_df['Season'] = season
     new_df['ID'] = new_df.apply(lambda x: '%s_%s_%s' % (str(x['Season']),str(x['hTeamID']),str(x['aTeamID'])),axis=1)
-    
+    return new_df 
 
-label_data_df = build_labelled_data()
-pred_data = matchup_data(season = 2022)
-pred_data['Y'] = -1 
-columns = ['Season', 'ID', 'Y', 'hTeamID', 'aTeamID']
-all_data = pd.concat([label_data_df[columns], pred_data[columns]])
+
